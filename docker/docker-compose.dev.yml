@@ -1,0 +1,384 @@
+# Enhanced Development Environment for Signate SaaS Platform
+# Extends production setup with PostgreSQL, Redis, and development tools
+# Compatible with existing Anthias Docker setup
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Multi-tenant Architecture
+  postgres:
+    image: postgres:15-alpine
+    container_name: signate-postgres-dev
+    hostname: signate-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-signate_dev}
+      - POSTGRES_USER=${POSTGRES_USER:-signate}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-signate_dev_password}
+      - POSTGRES_MULTIPLE_DATABASES=${POSTGRES_MULTIPLE_DATABASES:-tenant1,tenant2,shared}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./postgres-schemas.sql:/docker-entrypoint-initdb.d/02-schemas.sql:ro
+    networks:
+      - signate-backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-signate} -d ${POSTGRES_DB:-signate_dev}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c wal_buffers=16MB
+      -c checkpoint_completion_target=0.7
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c log_statement=mod
+      -c log_checkpoints=on
+      -c log_connections=on
+      -c log_disconnections=on
+
+  # Enhanced Redis for Development with Persistence
+  redis-dev:
+    image: redis:7-alpine
+    container_name: signate-redis-dev
+    hostname: signate-redis-dev
+    platform: "linux/amd64"
+    environment:
+      - REDIS_REPLICATION_MODE=master
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-dev-data:/data
+      - ./redis-dev.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - signate-backend
+    restart: unless-stopped
+    command: >
+      redis-server /usr/local/etc/redis/redis.conf
+      --appendonly yes
+      --maxmemory ${REDIS_MAX_MEMORY:-512mb}
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    sysctls:
+      net.core.somaxconn: 1024
+
+  # Enhanced Django Application Server with Development Features
+  anthias-server-dev:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.server
+      args:
+        - DEBIAN_VERSION=${DEBIAN_VERSION:-bookworm}
+        - PYTHON_VERSION=${PYTHON_VERSION:-3.11}
+        - NODE_VERSION=${NODE_VERSION:-22}
+      target: development
+    container_name: signate-server-dev
+    hostname: signate-server-dev
+    environment:
+      # Core Configuration
+      - HOME=/data
+      - LISTEN=${LISTEN_HOST:-0.0.0.0}
+      - PORT=${LISTEN_PORT:-8000}
+      - ENVIRONMENT=development
+      - DEBUG=true
+
+      # Database Configuration (PostgreSQL for development)
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-signate}:${POSTGRES_PASSWORD:-signate_dev_password}@postgres:5432/${POSTGRES_DB:-signate_dev}
+      - ENABLE_MIGRATIONS=true
+      - AUTO_MIGRATE=true
+
+      # Redis Configuration
+      - REDIS_URL=redis://redis-dev:6379/0
+      - CELERY_BROKER_URL=redis://redis-dev:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis-dev:6379/1
+
+      # Security (Development)
+      - SECRET_KEY=${SECRET_KEY:-signate-development-secret-key-never-use-in-production}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1,signate-server-dev,*.localhost}
+
+      # Development Features
+      - DJANGO_SETTINGS_MODULE=anthias_app.settings.development
+      - ENABLE_DEBUG_TOOLBAR=true
+      - ENABLE_HOT_RELOAD=true
+      - ENABLE_PROFILING=true
+      - WEBPACK_DEV_SERVER=true
+
+      # Git Information
+      - GIT_HASH=${GIT_HASH:-development}
+      - GIT_SHORT_HASH=${GIT_SHORT_HASH:-dev}
+      - GIT_BRANCH=${GIT_BRANCH:-main}
+      - DEVICE_TYPE=server
+
+      # File Storage
+      - MEDIA_ROOT=/data/media
+      - STATIC_ROOT=/data/static
+
+      # Testing
+      - COVERAGE_RCFILE=/usr/src/app/.coveragerc
+      - PYTEST_ADDOPTS=--verbose --tb=short
+
+    ports:
+      - "${SERVER_DEV_PORT:-9000}:8000"  # Direct server access
+      - "8001:8001"  # Django Debug Toolbar
+    volumes:
+      - anthias-dev-data:/data
+      - ../project/backend:/usr/src/app:cached
+      - static-dev-files:/data/static
+      - media-dev-files:/data/media
+      - coverage-reports:/usr/src/app/htmlcov
+      - test-results:/usr/src/app/test-results
+    networks:
+      - signate-backend
+      - signate-frontend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-dev:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    stdin_open: true
+    tty: true
+
+  # Enhanced WebSocket Service for Development
+  anthias-websocket-dev:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.websocket
+      args:
+        - DEBIAN_VERSION=${DEBIAN_VERSION:-bookworm}
+        - PYTHON_VERSION=${PYTHON_VERSION:-3.11}
+      target: development
+    container_name: signate-websocket-dev
+    hostname: signate-websocket-dev
+    environment:
+      - HOME=/data
+      - LISTEN=0.0.0.0
+      - PORT=9001
+      - REDIS_URL=redis://redis-dev:6379/2
+      - ENVIRONMENT=development
+      - DEBUG=true
+    ports:
+      - "9001:9001"
+    volumes:
+      - anthias-dev-data:/data
+      - ../project/backend:/usr/src/app:cached
+    networks:
+      - signate-backend
+    depends_on:
+      - anthias-server-dev
+      - redis-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9001"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Enhanced Celery Worker for Development
+  anthias-celery-dev:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.celery
+      args:
+        - DEBIAN_VERSION=${DEBIAN_VERSION:-bookworm}
+        - PYTHON_VERSION=${PYTHON_VERSION:-3.11}
+      target: development
+    container_name: signate-celery-dev
+    hostname: signate-celery-dev
+    environment:
+      - HOME=/data
+      - CELERY_BROKER_URL=redis://redis-dev:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis-dev:6379/1
+      - CELERY_WORKER_CONCURRENCY=${CELERY_WORKER_CONCURRENCY:-2}
+      - CELERY_WORKER_MAX_TASKS_PER_CHILD=${CELERY_WORKER_MAX_TASKS_PER_CHILD:-1000}
+      - CELERY_LOG_LEVEL=${CELERY_LOG_LEVEL:-INFO}
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-signate}:${POSTGRES_PASSWORD:-signate_dev_password}@postgres:5432/${POSTGRES_DB:-signate_dev}
+    volumes:
+      - anthias-dev-data:/data
+      - ../project/backend:/usr/src/app:cached
+      - media-dev-files:/data/media
+    networks:
+      - signate-backend
+    depends_on:
+      - anthias-server-dev
+      - redis-dev
+      - postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "inspect", "ping", "-A", "anthias_app"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # Development Nginx with Hot Reload Support
+  anthias-nginx-dev:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.nginx
+      args:
+        - NGINX_VERSION=${NGINX_VERSION:-alpine}
+      target: development
+    container_name: signate-nginx-dev
+    hostname: signate-nginx-dev
+    environment:
+      - HOME=/data
+      - NGINX_HOST=${NGINX_HOST:-localhost}
+      - NGINX_PORT=80
+      - ENABLE_HOT_RELOAD=true
+    ports:
+      - "${NGINX_PORT:-8000}:80"
+      - "8080:8080"  # Webpack dev server proxy
+    volumes:
+      - anthias-dev-data:/data:ro
+      - static-dev-files:/data/static:ro
+      - media-dev-files:/data/media:ro
+      - ../project/backend/nginx/dev.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - signate-frontend
+    depends_on:
+      - anthias-server-dev
+      - anthias-websocket-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Development Tools Container
+  dev-tools:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.dev-tools
+    container_name: signate-dev-tools
+    hostname: signate-dev-tools
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-signate}:${POSTGRES_PASSWORD:-signate_dev_password}@postgres:5432/${POSTGRES_DB:-signate_dev}
+      - REDIS_URL=redis://redis-dev:6379/0
+    volumes:
+      - ../project/backend:/workspace:cached
+      - dev-tools-cache:/home/developer/.cache
+      - coverage-reports:/workspace/htmlcov
+      - test-results:/workspace/test-results
+    networks:
+      - signate-backend
+    depends_on:
+      - postgres
+      - redis-dev
+    stdin_open: true
+    tty: true
+    command: tail -f /dev/null
+
+  # MailHog for Email Testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: signate-mailhog
+    hostname: signate-mailhog
+    ports:
+      - "8025:8025"  # Web UI
+      - "1025:1025"  # SMTP
+    networks:
+      - signate-backend
+    restart: unless-stopped
+
+# Enhanced Network Configuration
+networks:
+  signate-frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${FRONTEND_SUBNET:-172.20.0.0/16}
+  signate-backend:
+    driver: bridge
+    internal: false  # Allow external access for development
+    ipam:
+      config:
+        - subnet: ${BACKEND_SUBNET:-172.21.0.0/16}
+
+# Enhanced Volume Configuration for Development
+volumes:
+  # PostgreSQL persistent data
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
+
+  # Redis development data
+  redis-dev-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis-dev
+
+  # Application data for development
+  anthias-dev-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/anthias-dev
+
+  # Static files for development
+  static-dev-files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/static-dev
+
+  # Media files for development
+  media-dev-files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/media-dev
+
+  # Development tools cache
+  dev-tools-cache:
+    driver: local
+
+  # Coverage reports
+  coverage-reports:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/coverage
+
+  # Test results
+  test-results:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/test-results

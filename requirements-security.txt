@@ -1,0 +1,60 @@
+# Security-hardened dependencies - Updated with critical CVE fixes
+# Critical security updates applied:
+# CVE-2023-23931, CVE-2023-0286: cryptography package
+# CVE-2023-0464: pyOpenSSL package
+# Multiple Redis security enhancements
+
+# Core security packages
+cryptography>=41.0.0  # Critical: CVE-2023-23931, CVE-2023-0286 fixes
+pyOpenSSL>=23.2.0     # Critical: CVE-2023-0464 fix
+certifi>=2024.7.4     # Certificate authority updates
+
+# Authentication and authorization
+PyJWT>=2.8.0          # JWT token security
+bcrypt>=4.1.0         # Password hashing
+argon2-cffi>=23.1.0   # Advanced password hashing
+
+# Database security
+psycopg2-binary>=2.9.7    # PostgreSQL adapter with security fixes
+redis>=5.0.0               # Redis client with security enhancements
+redis-py-cluster>=2.1.0   # Redis cluster support
+
+# Web framework security
+Django>=4.2.24                    # Django with security patches
+djangorestframework>=3.16.1      # DRF security updates
+django-cors-headers>=4.3.0       # CORS security
+django-ratelimit>=4.1.0          # Rate limiting
+django-defender>=0.9.7           # Brute force protection
+django-security>=0.18.0          # Additional security middleware
+
+# SSL/TLS and encryption
+cryptography>=41.0.0
+pyca/cryptography>=41.0.0
+cffi>=1.16.0
+
+# Input validation and sanitization
+bleach>=6.1.0              # HTML sanitization
+defusedxml>=0.7.1          # XML security
+python-decouple>=3.8       # Environment variable security
+
+# Monitoring and logging
+django-audit-log>=0.8.0    # Audit logging
+django-log-request-id>=2.1.0  # Request tracking
+sentry-sdk>=1.38.0         # Error monitoring
+
+# Rate limiting and protection
+django-ratelimit>=4.1.0
+django-axes>=6.1.0         # Login attempt monitoring
+
+# Session security
+django-session-security>=2.6.7  # Session management
+redis-sessions>=0.1.0           # Redis session backend
+
+# API security
+drf-spectacular>=0.28.0     # API documentation
+drf-yasg>=1.21.7           # Swagger security
+django-oauth-toolkit>=1.7.0  # OAuth2 security
+
+# Network security
+requests>=2.32.3           # HTTP library with security fixes
+urllib3>=2.5.0             # URL handling security

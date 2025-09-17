@@ -1,0 +1,279 @@
+# Testing Environment for Signate SaaS Platform
+# Isolated testing infrastructure with PostgreSQL test databases
+
+version: '3.8'
+
+services:
+  # PostgreSQL Test Database
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: signate-postgres-test
+    hostname: signate-postgres-test
+    environment:
+      - POSTGRES_DB=${POSTGRES_TEST_DB:-signate_test}
+      - POSTGRES_USER=${POSTGRES_TEST_USER:-signate_test}
+      - POSTGRES_PASSWORD=${POSTGRES_TEST_PASSWORD:-signate_test_password}
+      - POSTGRES_MULTIPLE_DATABASES=test_tenant1,test_tenant2,test_shared
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./postgres-test-schemas.sql:/docker-entrypoint-initdb.d/02-test-schemas.sql:ro
+    networks:
+      - signate-test
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_TEST_USER:-signate_test} -d ${POSTGRES_TEST_DB:-signate_test}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+      -c checkpoint_segments=32
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c shared_buffers=256MB
+
+  # Redis Test Instance
+  redis-test:
+    image: redis:7-alpine
+    container_name: signate-redis-test
+    hostname: signate-redis-test
+    platform: "linux/amd64"
+    networks:
+      - signate-test
+    restart: "no"
+    command: >
+      redis-server
+      --save ""
+      --appendonly no
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Test Runner Service
+  anthias-test:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.test
+      args:
+        - DEBIAN_VERSION=${DEBIAN_VERSION:-bookworm}
+        - PYTHON_VERSION=${PYTHON_VERSION:-3.11}
+        - NODE_VERSION=${NODE_VERSION:-22}
+    container_name: signate-test-runner
+    hostname: signate-test-runner
+    environment:
+      # Core Configuration
+      - HOME=/data
+      - ENVIRONMENT=test
+      - DEBUG=false
+      - TESTING=true
+
+      # Test Database Configuration
+      - DATABASE_URL=postgresql://${POSTGRES_TEST_USER:-signate_test}:${POSTGRES_TEST_PASSWORD:-signate_test_password}@postgres-test:5432/${POSTGRES_TEST_DB:-signate_test}
+      - TEST_DATABASE_URL=postgresql://${POSTGRES_TEST_USER:-signate_test}:${POSTGRES_TEST_PASSWORD:-signate_test_password}@postgres-test:5432/test_signate
+
+      # Redis Configuration
+      - REDIS_URL=redis://redis-test:6379/0
+      - CELERY_BROKER_URL=redis://redis-test:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis-test:6379/1
+
+      # Security (Test)
+      - SECRET_KEY=test-secret-key-not-for-production
+      - ALLOWED_HOSTS=localhost,127.0.0.1,signate-test-runner
+
+      # Django Settings
+      - DJANGO_SETTINGS_MODULE=anthias_app.settings.test
+
+      # Git Information
+      - GIT_HASH=${GIT_HASH:-test}
+      - GIT_SHORT_HASH=${GIT_SHORT_HASH:-test}
+      - GIT_BRANCH=${GIT_BRANCH:-main}
+      - DEVICE_TYPE=test
+
+      # Testing Configuration
+      - COVERAGE_RCFILE=/usr/src/app/.coveragerc
+      - PYTEST_ADDOPTS=--verbose --tb=short --strict-markers --strict-config
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+
+      # Test Coverage Settings
+      - COVERAGE_THRESHOLD=80
+      - COVERAGE_FAIL_UNDER=75
+      - COVERAGE_REPORT_FORMAT=html,xml,term
+
+      # Parallel Testing
+      - PYTEST_WORKERS=${PYTEST_WORKERS:-auto}
+      - TEST_PARALLEL=${TEST_PARALLEL:-true}
+
+    volumes:
+      - ../project/backend:/usr/src/app:cached
+      - test-data:/data
+      - coverage-test-reports:/usr/src/app/htmlcov
+      - test-results-junit:/usr/src/app/test-results
+      - test-cache:/usr/src/app/.pytest_cache
+    networks:
+      - signate-test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    command: >
+      bash -c "
+        echo 'Waiting for services to be ready...' &&
+        python manage.py migrate --noinput &&
+        python manage.py collectstatic --noinput --clear &&
+        echo 'Services ready. Starting test runner...' &&
+        tail -f /dev/null
+      "
+
+  # Celery Test Worker
+  anthias-celery-test:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.celery
+      args:
+        - DEBIAN_VERSION=${DEBIAN_VERSION:-bookworm}
+        - PYTHON_VERSION=${PYTHON_VERSION:-3.11}
+    container_name: signate-celery-test
+    hostname: signate-celery-test
+    environment:
+      - HOME=/data
+      - CELERY_BROKER_URL=redis://redis-test:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis-test:6379/1
+      - CELERY_WORKER_CONCURRENCY=1
+      - CELERY_WORKER_MAX_TASKS_PER_CHILD=100
+      - CELERY_LOG_LEVEL=WARNING
+      - ENVIRONMENT=test
+      - DATABASE_URL=postgresql://${POSTGRES_TEST_USER:-signate_test}:${POSTGRES_TEST_PASSWORD:-signate_test_password}@postgres-test:5432/${POSTGRES_TEST_DB:-signate_test}
+      - TESTING=true
+    volumes:
+      - test-data:/data
+      - ../project/backend:/usr/src/app:cached
+    networks:
+      - signate-test
+    depends_on:
+      - anthias-test
+      - redis-test
+      - postgres-test
+    restart: "no"
+    command: >
+      bash -c "
+        echo 'Starting Celery test worker...' &&
+        celery -A anthias_app worker --loglevel=warning --concurrency=1 --without-gossip --without-mingle --without-heartbeat
+      "
+
+  # Selenium Grid Hub for Browser Testing
+  selenium-hub:
+    image: selenium/hub:4.15.0
+    container_name: signate-selenium-hub
+    hostname: signate-selenium-hub
+    ports:
+      - "4444:4444"
+    environment:
+      - GRID_MAX_SESSION=4
+      - GRID_BROWSER_TIMEOUT=60
+      - GRID_TIMEOUT=60
+    networks:
+      - signate-test
+    restart: "no"
+
+  # Chrome Browser for Selenium Tests
+  selenium-chrome:
+    image: selenium/node-chrome:4.15.0
+    container_name: signate-selenium-chrome
+    hostname: signate-selenium-chrome
+    environment:
+      - HUB_HOST=selenium-hub
+      - HUB_PORT=4444
+      - NODE_MAX_INSTANCES=2
+      - NODE_MAX_SESSION=2
+    volumes:
+      - /dev/shm:/dev/shm
+    networks:
+      - signate-test
+    depends_on:
+      - selenium-hub
+    restart: "no"
+
+  # Firefox Browser for Selenium Tests
+  selenium-firefox:
+    image: selenium/node-firefox:4.15.0
+    container_name: signate-selenium-firefox
+    hostname: signate-selenium-firefox
+    environment:
+      - HUB_HOST=selenium-hub
+      - HUB_PORT=4444
+      - NODE_MAX_INSTANCES=1
+      - NODE_MAX_SESSION=1
+    volumes:
+      - /dev/shm:/dev/shm
+    networks:
+      - signate-test
+    depends_on:
+      - selenium-hub
+    restart: "no"
+
+  # Test Report Server
+  test-reports:
+    image: nginx:alpine
+    container_name: signate-test-reports
+    hostname: signate-test-reports
+    ports:
+      - "8090:80"
+    volumes:
+      - coverage-test-reports:/usr/share/nginx/html/coverage:ro
+      - test-results-junit:/usr/share/nginx/html/results:ro
+      - ./nginx-test-reports.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - signate-test
+    restart: "no"
+
+# Test Network Configuration
+networks:
+  signate-test:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+# Test Volume Configuration
+volumes:
+  # PostgreSQL test data (ephemeral)
+  postgres-test-data:
+    driver: local
+
+  # Test application data
+  test-data:
+    driver: local
+
+  # Coverage reports
+  coverage-test-reports:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/coverage-test
+
+  # JUnit test results
+  test-results-junit:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/test-results-junit
+
+  # pytest cache
+  test-cache:
+    driver: local

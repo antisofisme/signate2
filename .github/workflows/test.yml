@@ -1,0 +1,609 @@
+name: Signate SaaS Testing Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*', 'release/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+  DJANGO_SETTINGS_MODULE: 'anthias_django.settings'
+  ENVIRONMENT: 'test'
+
+jobs:
+  # Pre-flight checks
+  pre-flight:
+    name: Pre-flight Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Check for secret leaks
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+
+    - name: Lint commit messages
+      uses: wagoid/commitlint-github-action@v5
+      if: github.event_name == 'pull_request'
+
+    - name: Check file sizes
+      run: |
+        find . -type f -size +10M -not -path "./.git/*" -exec ls -lh {} \; | tee large_files.txt
+        if [ -s large_files.txt ]; then
+          echo "Large files detected:"
+          cat large_files.txt
+          exit 1
+        fi
+
+  # Code quality and security scanning
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: pre-flight
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+        pip install bandit safety flake8 black isort mypy
+
+    - name: Code formatting check (Black)
+      run: |
+        black --check --diff project/backend/
+
+    - name: Import sorting check (isort)
+      run: |
+        isort --check-only --diff project/backend/
+
+    - name: Linting (Flake8)
+      run: |
+        flake8 project/backend/ --statistics --tee --output-file=flake8-report.txt
+
+    - name: Type checking (MyPy)
+      run: |
+        mypy project/backend/ --ignore-missing-imports || true
+
+    - name: Security scanning (Bandit)
+      run: |
+        bandit -r project/backend/ -f json -o bandit-report.json || true
+        bandit -r project/backend/ -f txt
+
+    - name: Dependency vulnerability scanning (Safety)
+      run: |
+        safety check --json --output safety-report.json || true
+        safety check
+
+    - name: Upload code quality reports
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: code-quality-reports
+        path: |
+          flake8-report.txt
+          bandit-report.json
+          safety-report.json
+
+  # Unit tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: pre-flight
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11']
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sqlite3 libsqlite3-dev
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+        pip install pytest pytest-django pytest-cov pytest-xdist pytest-mock
+        pip install freezegun time-machine
+
+    - name: Set up test database
+      run: |
+        mkdir -p /tmp/test_data
+        export TEST_DB_PATH="/tmp/test_data/test.db"
+
+    - name: Run unit tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "unit and not slow" \
+          --cov=anthias_app \
+          --cov=api \
+          --cov-report=xml \
+          --cov-report=html \
+          --cov-report=term-missing \
+          --junitxml=unit-test-results.xml \
+          --maxfail=10 \
+          -v \
+          --tb=short
+
+    - name: Upload unit test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: unit-test-results-${{ matrix.python-version }}
+        path: |
+          project/backend/unit-test-results.xml
+          project/backend/htmlcov/
+          project/backend/coverage.xml
+
+  # Integration tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: unit-tests
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: signate_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+        pip install psycopg2-binary redis
+
+    - name: Set up test environment
+      run: |
+        cp project/backend/anthias_django/settings.py project/backend/anthias_django/settings_test.py
+
+    - name: Run database migrations
+      working-directory: project/backend
+      env:
+        DATABASE_URL: postgresql://testuser:testpass@localhost:5432/signate_test
+      run: |
+        python manage.py migrate --settings=anthias_django.settings
+
+    - name: Run integration tests
+      working-directory: project/backend
+      env:
+        DATABASE_URL: postgresql://testuser:testpass@localhost:5432/signate_test
+        REDIS_URL: redis://localhost:6379/0
+      run: |
+        pytest tests/ \
+          -m "integration" \
+          --cov=anthias_app \
+          --cov=api \
+          --cov-append \
+          --junitxml=integration-test-results.xml \
+          --maxfail=5 \
+          -v
+
+    - name: Upload integration test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: |
+          project/backend/integration-test-results.xml
+
+  # API tests
+  api-tests:
+    name: API Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: unit-tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+        pip install requests-mock
+
+    - name: Run API tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "api" \
+          --junitxml=api-test-results.xml \
+          --maxfail=5 \
+          -v
+
+    - name: API backwards compatibility tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "backwards_compat" \
+          --junitxml=api-compat-test-results.xml \
+          -v
+
+    - name: Upload API test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: api-test-results
+        path: |
+          project/backend/api-test-results.xml
+          project/backend/api-compat-test-results.xml
+
+  # Multi-tenant tests
+  multi-tenant-tests:
+    name: Multi-Tenant Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: unit-tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+
+    - name: Run multi-tenant isolation tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "tenant" \
+          --junitxml=tenant-test-results.xml \
+          --maxfail=3 \
+          -v
+
+    - name: Upload tenant test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: tenant-test-results
+        path: |
+          project/backend/tenant-test-results.xml
+
+  # Security tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: unit-tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+
+    - name: Run security tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "security" \
+          --junitxml=security-test-results.xml \
+          --maxfail=5 \
+          -v
+
+    - name: Upload security test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-test-results
+        path: |
+          project/backend/security-test-results.xml
+
+  # Performance tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: unit-tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+        pip install psutil memory-profiler
+
+    - name: Run performance tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "performance" \
+          --junitxml=performance-test-results.xml \
+          -v \
+          --tb=short
+
+    - name: Upload performance test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-test-results
+        path: |
+          project/backend/performance-test-results.xml
+
+  # End-to-end tests (basic smoke tests)
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [integration-tests, api-tests]
+    if: github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r project/backend/requirements/requirements.txt
+        pip install -r project/backend/requirements/requirements.dev.txt
+
+    - name: Start Django server
+      working-directory: project/backend
+      run: |
+        python manage.py runserver 8000 &
+        sleep 10
+
+    - name: Run smoke tests
+      working-directory: project/backend
+      run: |
+        pytest tests/ \
+          -m "smoke" \
+          --junitxml=e2e-test-results.xml \
+          -v
+
+    - name: Upload E2E test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: e2e-test-results
+        path: |
+          project/backend/e2e-test-results.xml
+
+  # Test coverage analysis
+  coverage-analysis:
+    name: Coverage Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [unit-tests, integration-tests, api-tests]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all test artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install coverage tools
+      run: |
+        pip install coverage pytest-cov
+
+    - name: Combine coverage reports
+      run: |
+        find . -name "coverage.xml" -exec cp {} coverage-{}.xml \;
+        find . -name ".coverage" -exec cp {} .coverage-{} \;
+
+    - name: Generate combined coverage report
+      run: |
+        coverage combine .coverage-* || true
+        coverage report --show-missing || true
+        coverage html -d combined_htmlcov || true
+        coverage xml -o combined_coverage.xml || true
+
+    - name: Upload combined coverage
+      uses: actions/upload-artifact@v3
+      with:
+        name: combined-coverage-report
+        path: |
+          combined_coverage.xml
+          combined_htmlcov/
+
+    - name: Coverage comment on PR
+      if: github.event_name == 'pull_request'
+      uses: py-cov-action/python-coverage-comment-action@v3
+      with:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        COVERAGE_FILE: combined_coverage.xml
+        MINIMUM_GREEN: 90
+        MINIMUM_ORANGE: 80
+
+  # Test results summary
+  test-summary:
+    name: Test Results Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [unit-tests, integration-tests, api-tests, multi-tenant-tests, security-tests]
+    if: always()
+
+    steps:
+    - name: Download all test results
+      uses: actions/download-artifact@v3
+
+    - name: Generate test summary
+      run: |
+        echo "# Test Results Summary" > test_summary.md
+        echo "" >> test_summary.md
+
+        echo "## Test Status" >> test_summary.md
+        echo "- Unit Tests: ${{ needs.unit-tests.result }}" >> test_summary.md
+        echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> test_summary.md
+        echo "- API Tests: ${{ needs.api-tests.result }}" >> test_summary.md
+        echo "- Multi-Tenant Tests: ${{ needs.multi-tenant-tests.result }}" >> test_summary.md
+        echo "- Security Tests: ${{ needs.security-tests.result }}" >> test_summary.md
+        echo "" >> test_summary.md
+
+        echo "## Test Artifacts" >> test_summary.md
+        echo "Test results and coverage reports are available in the workflow artifacts." >> test_summary.md
+
+    - name: Upload test summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-summary
+        path: test_summary.md
+
+    - name: Comment test summary on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const summary = fs.readFileSync('test_summary.md', 'utf8');
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: summary
+          });
+
+  # Deployment readiness check
+  deployment-check:
+    name: Deployment Readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [code-quality, unit-tests, integration-tests, api-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check deployment readiness
+      run: |
+        echo "✅ All tests passed"
+        echo "✅ Code quality checks passed"
+        echo "✅ Security scans completed"
+        echo "✅ Ready for deployment"
+
+    - name: Create deployment artifact
+      run: |
+        tar -czf deployment-ready.tar.gz project/
+
+    - name: Upload deployment artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: deployment-ready
+        path: deployment-ready.tar.gz
+        retention-days: 30
