@@ -174,11 +174,11 @@ const AdvancedFilters: React.FC<AdvancedFiltersProps> = ({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs text-muted-foreground">From</Label>
-              <DatePicker date={dateFrom} setDate={handleDateFromChange} />
+              <DatePicker date={dateFrom} onSelect={handleDateFromChange} />
             </div>
             <div>
               <Label className="text-xs text-muted-foreground">To</Label>
-              <DatePicker date={dateTo} setDate={handleDateToChange} />
+              <DatePicker date={dateTo} onSelect={handleDateToChange} />
             </div>
           </div>
         </div>

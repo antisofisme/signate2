@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
 import {
   Asset,
@@ -22,7 +22,7 @@ export const useAssetsList = (filters: AssetFilters = {}) => {
       return apiClient.get('/assets/', { params: filters });
     },
     staleTime: 2 * 60 * 1000, // 2 minutes
-    keepPreviousData: true, // Keep showing previous data while loading new
+    placeholderData: (prevData) => prevData, // Keep showing previous data while loading new
   });
 };
 
@@ -302,7 +302,7 @@ export const useUploadFiles = () => {
 
 // Hook for infinite loading (pagination)
 export const useInfiniteAssets = (filters: AssetFilters = {}) => {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: [...queryKeys.assets.lists(), 'infinite', filters],
     queryFn: async ({ pageParam = 1 }): Promise<PaginatedResponse<Asset>> => {
       return apiClient.get('/assets/', {
@@ -313,7 +313,7 @@ export const useInfiniteAssets = (filters: AssetFilters = {}) => {
       return lastPage.meta.has_next ? lastPage.meta.page + 1 : undefined;
     },
     staleTime: 2 * 60 * 1000,
-    keepPreviousData: true,
+    initialPageParam: 1,
   });
 };
 
@@ -393,8 +393,8 @@ export const useAssetOperations = () => {
     clearSelection,
     handleBulkDelete,
     handleBulkShare,
-    isDeleting: deleteAssetsMutation.isLoading,
-    isSharing: shareAssetMutation.isLoading,
+    isDeleting: deleteAssetsMutation.isPending,
+    isSharing: shareAssetMutation.isPending,
   };
 };
 

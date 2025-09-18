@@ -40,20 +40,7 @@ const defaultOptions: DefaultOptions = {
     // Refetch when coming back online
     refetchOnReconnect: true,
 
-    // Error handling
-    onError: (error) => {
-      if (error instanceof ApiError) {
-        // Don't show toast for certain error types
-        const silentErrors = [ApiErrorCode.UNAUTHORIZED];
-
-        if (!silentErrors.includes(error.code)) {
-          toast.error(error.message);
-        }
-      } else {
-        console.error('Query error:', error);
-        toast.error('An unexpected error occurred');
-      }
-    },
+    // Error handling is now done at component level or with error boundaries
   },
 
   mutations: {
@@ -74,15 +61,7 @@ const defaultOptions: DefaultOptions = {
       return false;
     },
 
-    // Error handling for mutations
-    onError: (error) => {
-      if (error instanceof ApiError) {
-        toast.error(error.message);
-      } else {
-        console.error('Mutation error:', error);
-        toast.error('An unexpected error occurred');
-      }
-    },
+    // Error handling for mutations is now done at component level
   },
 };
 

@@ -8,7 +8,7 @@ services:
   # Main Django Application Server
   anthias-server:
     build:
-      context: ./project/backend
+      context: ../project/backend
       dockerfile: docker/Dockerfile.server
       args:
         - DEBIAN_VERSION=bookworm
@@ -26,6 +26,11 @@ services:
 
       # Database Configuration
       - DATABASE_URL=sqlite:////data/signate.db
+
+      # Enhanced SaaS Features
+      - ENABLE_MULTI_TENANT=true
+      - ENABLE_API_V3=true
+      - JWT_SECRET_KEY=signate-jwt-development-key
 
       # Redis Configuration
       - REDIS_URL=redis://redis:6379/0
@@ -53,7 +58,7 @@ services:
       - "9000:8000"  # Direct server access for development
     volumes:
       - anthias-data:/data
-      - ./project/backend:/usr/src/app
+      - ../project/backend:/usr/src/app
       - static-files:/data/static
       - media-files:/data/media
     networks:
@@ -72,7 +77,7 @@ services:
   # WebSocket Service for Real-time Communication
   anthias-websocket:
     build:
-      context: ./project/backend
+      context: ../project/backend
       dockerfile: docker/Dockerfile.websocket
       args:
         - DEBIAN_VERSION=bookworm
@@ -102,7 +107,7 @@ services:
   # Celery Worker for Background Tasks
   anthias-celery:
     build:
-      context: ./project/backend
+      context: ../project/backend
       dockerfile: docker/Dockerfile.celery
       args:
         - DEBIAN_VERSION=bookworm
@@ -157,7 +162,7 @@ services:
   # Nginx Reverse Proxy and Static File Server
   anthias-nginx:
     build:
-      context: ./project/backend
+      context: ../project/backend
       dockerfile: docker/Dockerfile.nginx
       args:
         - NGINX_VERSION=alpine
@@ -184,6 +189,43 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Next.js Frontend Application
+  signate-frontend:
+    build:
+      context: ../project/frontend
+      dockerfile: docker/Dockerfile.production
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:9000
+        - NEXT_PUBLIC_WS_URL=ws://localhost:9001
+        - BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        - GIT_HASH=development
+    container_name: signate-frontend
+    hostname: signate-frontend
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:9000
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:9000/api/v3
+      - NEXT_PUBLIC_WS_URL=ws://localhost:9001
+      - PORT=3000
+    ports:
+      - "3000:3000"  # Frontend development port
+    volumes:
+      - ../project/frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - signate-frontend
+    depends_on:
+      - anthias-server
+      - anthias-websocket
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 # Network Configuration
 networks:

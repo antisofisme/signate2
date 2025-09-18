@@ -203,3 +203,23 @@ export interface DataTableProps<T = any> {
 }
 
 export type Theme = 'light' | 'dark' | 'system'
+
+// UI Component Types
+export interface ErrorProps {
+  title?: string;
+  message?: string;
+  error?: Error;
+  onRetry?: () => void;
+  className?: string;
+  children?: React.ReactNode;
+}
+
+export interface LoadingProps {
+  size?: 'sm' | 'md' | 'lg';
+  text?: string;
+  className?: string;
+  children?: React.ReactNode;
+}
+
+// Re-export types from api.ts
+export type { UserRole, NavigationItem } from './api'

@@ -309,12 +309,12 @@ export const BulkOperationsBar: React.FC<BulkOperationsBarProps> = ({
 
         case 'duplicate':
           // This would need to be implemented in the store
-          toast.info('Bulk duplicate functionality coming soon')
+          toast('Bulk duplicate functionality coming soon')
           break
 
         case 'move':
           // This would need folder/category implementation
-          toast.info('Move functionality coming soon')
+          toast('Move functionality coming soon')
           break
 
         case 'tag':
@@ -329,12 +329,12 @@ export const BulkOperationsBar: React.FC<BulkOperationsBarProps> = ({
 
         case 'schedule':
           // This would need scheduling implementation
-          toast.info('Scheduling functionality coming soon')
+          toast('Scheduling functionality coming soon')
           break
 
         case 'archive':
           // This would need archive functionality
-          toast.info('Archive functionality coming soon')
+          toast('Archive functionality coming soon')
           break
 
         default:

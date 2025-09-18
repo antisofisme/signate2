@@ -419,10 +419,10 @@ export class ApiClient {
 
 // Create default API client instance
 export const apiClient = new ApiClient({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v3',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v3',
   enableOfflineSupport: true,
   enableWebSockets: true,
-  websocketURL: import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws',
+  websocketURL: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws',
 });
 
 // Export configured instance

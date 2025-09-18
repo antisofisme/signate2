@@ -108,7 +108,7 @@ const initialState: AppState = {
 };
 
 export const useAppStore = create<AppStore>()(
-  persist(
+  typeof window !== 'undefined' ? persist(
     (set, get) => ({
       ...initialState,
 
@@ -230,7 +230,95 @@ export const useAppStore = create<AppStore>()(
         preferences: state.preferences,
       }),
     }
-  )
+  ) : (set, get) => ({
+    ...initialState,
+
+    // Theme actions
+    setTheme: (theme) => {
+      set({ theme });
+    },
+
+    toggleTheme: () => {
+      const { theme } = get();
+      const newTheme = theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light';
+      get().setTheme(newTheme);
+    },
+
+    // Sidebar actions
+    setSidebarOpen: (open) => set({ sidebarOpen: open }),
+    toggleSidebar: () => {
+      const { sidebarOpen } = get();
+      set({ sidebarOpen: !sidebarOpen });
+    },
+    setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+    toggleSidebarCollapsed: () => {
+      const { sidebarCollapsed } = get();
+      set({ sidebarCollapsed: !sidebarCollapsed });
+    },
+
+    // Loading actions
+    setGlobalLoading: (loading) => set({ globalLoading: loading }),
+
+    // Notification actions
+    addNotification: (notification) => {
+      const newNotification: Notification = {
+        ...notification,
+        id: `notification-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date(),
+        read: false,
+      };
+
+      set((state) => ({
+        notifications: [newNotification, ...state.notifications],
+      }));
+    },
+
+    removeNotification: (id) => {
+      set((state) => ({
+        notifications: state.notifications.filter((n) => n.id !== id),
+      }));
+    },
+
+    markNotificationAsRead: (id) => {
+      set((state) => ({
+        notifications: state.notifications.map((n) =>
+          n.id === id ? { ...n, read: true } : n
+        ),
+      }));
+    },
+
+    markAllNotificationsAsRead: () => {
+      set((state) => ({
+        notifications: state.notifications.map((n) => ({ ...n, read: true })),
+      }));
+    },
+
+    clearNotifications: () => set({ notifications: [] }),
+
+    // Preferences actions
+    updatePreferences: (newPreferences) => {
+      set((state) => ({
+        preferences: { ...state.preferences, ...newPreferences },
+      }));
+    },
+
+    resetPreferences: () => set({ preferences: defaultPreferences }),
+
+    // Activity actions
+    addActivity: (activity) => {
+      const newActivity: ActivityItem = {
+        ...activity,
+        id: `activity-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date(),
+      };
+
+      set((state) => ({
+        recentActivity: [newActivity, ...state.recentActivity.slice(0, 49)],
+      }));
+    },
+
+    clearActivity: () => set({ recentActivity: [] }),
+  })
 );
 
 // Utility hooks

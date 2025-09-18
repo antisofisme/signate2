@@ -10,7 +10,7 @@ import {
   Copy,
   Calendar,
   Clock,
-  DragHandleDots2,
+  GripVertical,
   Monitor,
   Users,
   Settings,
@@ -345,7 +345,7 @@ const PlaylistEditor: React.FC<{
                             className="flex items-center gap-3 p-3 border rounded-md bg-card"
                           >
                             <div {...provided.dragHandleProps}>
-                              <DragHandleDots2 className="h-4 w-4 text-muted-foreground" />
+                              <GripVertical className="h-4 w-4 text-muted-foreground" />
                             </div>
 
                             <Icon className="h-4 w-4 text-muted-foreground" />
@@ -491,14 +491,14 @@ const PlaylistScheduler: React.FC<{
                     <Label className="text-sm">Start Date</Label>
                     <DatePicker
                       date={schedule.startDate}
-                      setDate={(date) => date && updateSchedule(schedule.id, { startDate: date })}
+                      onSelect={(date) => date && updateSchedule(schedule.id, { startDate: date })}
                     />
                   </div>
                   <div>
                     <Label className="text-sm">End Date</Label>
                     <DatePicker
                       date={schedule.endDate}
-                      setDate={(date) => date && updateSchedule(schedule.id, { endDate: date })}
+                      onSelect={(date) => date && updateSchedule(schedule.id, { endDate: date })}
                     />
                   </div>
                 </div>

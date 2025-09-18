@@ -451,3 +451,17 @@ export const isPaginatedResponse = (data: any): data is PaginatedResponse => {
 export const isErrorResponse = (data: any): data is ErrorResponse => {
   return data && typeof data === 'object' && 'error' in data && 'message' in data;
 };
+
+// Navigation Types
+export interface NavigationItem {
+  title: string;
+  href: string;
+  icon?: React.ComponentType<any>;
+  description?: string;
+  disabled?: boolean;
+  children?: {
+    title: string;
+    href: string;
+    icon?: React.ComponentType<any>;
+  }[];
+}

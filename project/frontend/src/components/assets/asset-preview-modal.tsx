@@ -382,14 +382,14 @@ const AssetEdit: React.FC<{
           <Label>Start Date</Label>
           <DatePicker
             date={formData.startDate}
-            setDate={(date) => setFormData({ ...formData, startDate: date })}
+            onSelect={(date) => setFormData({ ...formData, startDate: date })}
           />
         </div>
         <div>
           <Label>End Date</Label>
           <DatePicker
             date={formData.endDate}
-            setDate={(date) => setFormData({ ...formData, endDate: date })}
+            onSelect={(date) => setFormData({ ...formData, endDate: date })}
           />
         </div>
       </div>
@@ -444,15 +444,14 @@ export const AssetPreviewModal: React.FC<AssetPreviewModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState('preview')
   const { assets, currentAsset } = useAssets()
-  const { fetchAsset, updateAsset, deleteAsset, duplicateAsset } = useAssetActions()
+  const { updateAsset, deleteAsset, duplicateAsset } = useAssetActions()
 
   const asset = currentAsset || assets.find(a => a.asset_id === assetId)
 
   useEffect(() => {
-    if (open && assetId && !asset) {
-      fetchAsset(assetId)
-    }
-  }, [open, assetId, asset, fetchAsset])
+    // Asset will be found from assets array or currentAsset
+    // No need to fetch individual assets
+  }, [open, assetId, asset])
 
   const handleAction = async (action: string) => {
     if (!asset) return
@@ -477,7 +476,7 @@ export const AssetPreviewModal: React.FC<AssetPreviewModalProps> = ({
           break
         case 'share':
           // Open share modal (to be implemented)
-          toast.info('Share functionality coming soon!')
+          toast('Share functionality coming soon!')
           break
       }
     } catch (error) {

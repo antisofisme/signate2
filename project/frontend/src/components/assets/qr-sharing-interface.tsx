@@ -700,9 +700,9 @@ export const QRSharingInterface: React.FC<QRSharingInterfaceProps> = ({
                       <div>
                         <Label>Expires On</Label>
                         <DatePicker
-                          date={shareSettings.expiresAt}
-                          setDate={(date) =>
-                            setShareSettings(prev => ({ ...prev, expiresAt: date }))
+                          date={shareSettings.expiresAt || undefined}
+                          onSelect={(date) =>
+                            setShareSettings(prev => ({ ...prev, expiresAt: date || null }))
                           }
                         />
                       </div>

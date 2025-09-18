@@ -209,14 +209,14 @@ const FilePreview: React.FC<{
                 <Label className="text-sm">Start Date</Label>
                 <DatePicker
                   date={file.metadata?.startDate}
-                  setDate={(date) => handleMetadataChange('startDate', date)}
+                  onSelect={(date) => handleMetadataChange('startDate', date)}
                 />
               </div>
               <div>
                 <Label className="text-sm">End Date</Label>
                 <DatePicker
                   date={file.metadata?.endDate}
-                  setDate={(date) => handleMetadataChange('endDate', date)}
+                  onSelect={(date) => handleMetadataChange('endDate', date)}
                 />
               </div>
             </div>

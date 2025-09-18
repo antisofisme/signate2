@@ -177,7 +177,7 @@ export function ShareModal({
             <Checkbox
               id="public"
               checked={isPublic}
-              onCheckedChange={setIsPublic}
+              onCheckedChange={(checked) => setIsPublic(checked === true)}
             />
             <Label htmlFor="public" className="flex items-center space-x-2">
               {isPublic ? <Globe className="h-4 w-4" /> : <Lock className="h-4 w-4" />}

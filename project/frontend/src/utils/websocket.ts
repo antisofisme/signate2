@@ -43,7 +43,7 @@ export class WebSocketClient {
     }
 
     // Listen for network changes
-    networkMonitor.addListener(this.handleNetworkChange.bind(this));
+    networkMonitor?.addListener(this.handleNetworkChange.bind(this));
   }
 
   async connect(): Promise<void> {
@@ -357,29 +357,29 @@ export class WebSocketClient {
 }
 
 // Global WebSocket client instance
-export const webSocketClient = new WebSocketClient({
-  url: import.meta.env.VITE_WS_URL || 'ws://localhost:8000',
+export const webSocketClient = typeof window !== 'undefined' ? new WebSocketClient({
+  url: process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000',
   autoConnect: false, // Don't auto-connect until user is authenticated
-});
+}) : null;
 
 // Convenience hooks for React components
 export const useWebSocket = () => {
   const subscribe = <T = any>(messageType: string, handler: MessageHandler<T>) => {
-    return webSocketClient.subscribe(messageType, handler);
+    return webSocketClient?.subscribe(messageType, handler);
   };
 
   const subscribeToAll = <T = any>(handler: MessageHandler<T>) => {
-    return webSocketClient.subscribeToAll(handler);
+    return webSocketClient?.subscribeToAll(handler);
   };
 
   const emit = (event: string, data?: any) => {
-    return webSocketClient.emit(event, data);
+    return webSocketClient?.emit(event, data);
   };
 
-  const connect = () => webSocketClient.connect();
-  const disconnect = () => webSocketClient.disconnect();
-  const isConnected = () => webSocketClient.isConnected();
-  const getStatus = () => webSocketClient.getStatus();
+  const connect = () => webSocketClient?.connect();
+  const disconnect = () => webSocketClient?.disconnect();
+  const isConnected = () => webSocketClient?.isConnected() || false;
+  const getStatus = () => webSocketClient?.getStatus() || 'disconnected';
 
   return {
     subscribe,

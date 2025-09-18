@@ -90,6 +90,7 @@ const Sidebar: React.FC = () => {
   }
 
   const isActive = (href: string) => {
+    if (!pathname) return false;
     if (href === '/dashboard') {
       return pathname === href;
     }

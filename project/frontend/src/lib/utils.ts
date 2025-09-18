@@ -45,6 +45,10 @@ export function getInitials(name: string): string {
     .slice(0, 2)
 }
 
+export function generateInitials(name: string): string {
+  return getInitials(name)
+}
+
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text
   return text.slice(0, maxLength) + '...'

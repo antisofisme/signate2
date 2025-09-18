@@ -1,0 +1,224 @@
+# Signate Digital Signage Platform - Backend Only
+# Based on Anthias (formerly Screenly OSE)
+# Backend services only for testing
+
+services:
+  # Main Django Application Server
+  anthias-server:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.server
+      args:
+        - DEBIAN_VERSION=bookworm
+        - PYTHON_VERSION=3.11
+        - NODE_VERSION=22
+    container_name: signate-server
+    hostname: signate-server
+    environment:
+      # Core Configuration
+      - HOME=/data
+      - LISTEN=0.0.0.0
+      - PORT=8000
+      - ENVIRONMENT=development
+      - DEBUG=true
+
+      # Database Configuration
+      - DATABASE_URL=sqlite:////data/signate.db
+
+      # Enhanced SaaS Features
+      - ENABLE_MULTI_TENANT=true
+      - ENABLE_API_V3=true
+      - JWT_SECRET_KEY=signate-jwt-development-key
+
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+
+      # Security
+      - SECRET_KEY=signate-development-secret-key
+      - ALLOWED_HOSTS=localhost,127.0.0.1,signate-server
+
+      # Git Information (for version tracking)
+      - GIT_HASH=development
+      - GIT_SHORT_HASH=dev
+      - GIT_BRANCH=main
+      - DEVICE_TYPE=server
+
+      # Django Settings
+      - DJANGO_SETTINGS_MODULE=anthias_django.settings
+
+      # Media & Static Files
+      - MEDIA_ROOT=/data/media
+      - STATIC_ROOT=/data/static
+
+    ports:
+      - "9000:8000"  # Direct server access for development
+    volumes:
+      - anthias-data:/data
+      - ../project/backend:/usr/src/app
+      - static-files:/data/static
+      - media-files:/data/media
+    networks:
+      - signate-backend
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # WebSocket Service for Real-time Communication
+  anthias-websocket:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.websocket
+      args:
+        - DEBIAN_VERSION=bookworm
+        - PYTHON_VERSION=3.11
+    container_name: signate-websocket
+    hostname: signate-websocket
+    environment:
+      - HOME=/data
+      - LISTEN=0.0.0.0
+      - PORT=9001
+      - REDIS_URL=redis://redis:6379/2
+      - ENVIRONMENT=development
+    volumes:
+      - anthias-data:/data
+    networks:
+      - signate-backend
+    depends_on:
+      - anthias-server
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9001"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Celery Worker for Background Tasks
+  anthias-celery:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.celery
+      args:
+        - DEBIAN_VERSION=bookworm
+        - PYTHON_VERSION=3.11
+    container_name: signate-celery
+    hostname: signate-celery
+    environment:
+      - HOME=/data
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_WORKER_CONCURRENCY=4
+      - CELERY_WORKER_MAX_TASKS_PER_CHILD=1000
+      - ENVIRONMENT=development
+      - DATABASE_URL=sqlite:////data/signate.db
+    volumes:
+      - anthias-data:/data
+      - media-files:/data/media
+    networks:
+      - signate-backend
+    depends_on:
+      - anthias-server
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "inspect", "ping", "-A", "anthias_app"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache and Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: signate-redis
+    hostname: signate-redis
+    platform: "linux/amd64"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    environment:
+      - REDIS_REPLICATION_MODE=master
+    volumes:
+      - redis-data:/data
+    networks:
+      - signate-backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    sysctls:
+      net.core.somaxconn: 1024
+
+  # Nginx Reverse Proxy and Static File Server
+  anthias-nginx:
+    build:
+      context: ../project/backend
+      dockerfile: docker/Dockerfile.nginx
+      args:
+        - NGINX_VERSION=alpine
+    container_name: signate-nginx
+    hostname: signate-nginx
+    environment:
+      - HOME=/data
+      - NGINX_HOST=localhost
+      - NGINX_PORT=80
+    ports:
+      - "8000:80"  # Main application port
+    volumes:
+      - anthias-data:/data:ro
+      - static-files:/data/static:ro
+      - media-files:/data/media:ro
+    networks:
+      - signate-backend
+    depends_on:
+      - anthias-server
+      - anthias-websocket
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# Network Configuration
+networks:
+  signate-backend:
+    driver: bridge
+    internal: false
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+# Persistent Volume Configuration
+volumes:
+  anthias-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/anthias
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+  static-files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/static
+  media-files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/media

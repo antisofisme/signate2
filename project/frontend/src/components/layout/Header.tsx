@@ -123,7 +123,7 @@ export const Header: React.FC = () => {
                 <Avatar className="h-10 w-10">
                   <AvatarImage src={user?.profileImage} alt={user?.firstName} />
                   <AvatarFallback>
-                    {user ? generateInitials(user.firstName, user.lastName) : 'U'}
+                    {user ? generateInitials(`${user.firstName} ${user.lastName}`) : 'U'}
                   </AvatarFallback>
                 </Avatar>
               </Button>
